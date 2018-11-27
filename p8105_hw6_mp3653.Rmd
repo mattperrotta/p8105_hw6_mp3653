@@ -31,5 +31,54 @@ baltimore = homicide_data %>%
   filter(city == 'Baltimore')
 
 baltimore_lr = glm(outcome ~ victim_age + victim_sex + victim_race, data = baltimore, family = binomial())
+
+baltimore_lr %>% broom::tidy() %>% 
+  janitor::clean_names() %>% 
+  mutate(OR = exp(estimate),
+         lower_bound = exp(estimate - (1.96 * std_error)),
+         upper_bound = exp(estimate + (1.96 * std_error))) %>% 
+  filter(term == 'victim_racenon-white') %>% 
+  select(OR, lower_bound, upper_bound) %>% 
+  knitr::kable()
+
 ```
 
+All cities
+```{r}
+city_lr = homicide_data %>% 
+  group_by(city) %>% 
+  nest() %>% 
+  mutate(models = map(data, ~ glm(outcome ~ victim_age + victim_sex + victim_race, data = .x, family = binomial())),
+         models = map(models, broom::tidy)) %>% 
+  select(-data) %>% 
+  unnest() %>% 
+  janitor::clean_names() %>% 
+  mutate(OR = exp(estimate),
+         lower_bound = exp(estimate - (1.96 * std_error)),
+         upper_bound = exp(estimate + (1.96 * std_error)))
+
+city_lr %>% 
+  filter(term == 'victim_racenon-white') %>% 
+  select(city, OR, lower_bound, upper_bound) %>% 
+  knitr::kable()
+```
+
+Plot of estimated ORs and CIs for all cities
+```{r}
+city_lr %>% 
+  mutate(city = as.factor(city),
+         city = fct_reorder(city, OR)) %>% 
+  filter(term == 'victim_racenon-white') %>%
+  ggplot(aes(x = city, y = OR)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = lower_bound, ymax = upper_bound)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(
+    title = 'OR (and 95% CI) for each City'
+  )
+
+```
+
+Commenttttttttt
+
+# Problem 2
