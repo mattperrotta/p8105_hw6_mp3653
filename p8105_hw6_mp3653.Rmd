@@ -17,9 +17,19 @@ homicide_data = read_csv('https://raw.githubusercontent.com/washingtonpost/data-
   janitor::clean_names() %>% 
   unite(city_state, c(city, state), sep = ", ", remove = FALSE) %>% 
   filter(!(city_state %in% c('Dallas, TX', 'Phoenix, AZ', 'Kansas City, MO', 'Tulsa, AL'))) %>% 
-  mutate(outcome = ifelse(disposition == 'Closed by arrest', 'solved', 'unsolved'),
+  mutate(outcome = as.factor(ifelse(disposition == 'Closed by arrest', 'solved', 'unsolved')),
          victim_age = as.numeric(victim_age),
          victim_race = ifelse(victim_race == 'White', 'white', 'non-white'),
-         victim_race = fct_relevel(victim_race, 'white'))
+         victim_race = fct_relevel(victim_race, 'white'),
+         victim_sex = as.factor(victim_sex))
+```
+
+### Logistic Regression
+Baltimore
+```{r}
+baltimore = homicide_data %>% 
+  filter(city == 'Baltimore')
+
+baltimore_lr = glm(outcome ~ victim_age + victim_sex + victim_race, data = baltimore, family = binomial())
 ```
 
