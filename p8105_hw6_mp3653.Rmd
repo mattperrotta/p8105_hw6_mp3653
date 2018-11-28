@@ -8,6 +8,7 @@ output: github_document
 ### Load Packages
 ```{r}
 library(tidyverse)
+library(modelr)
 ```
 
 # Problem 1
@@ -17,21 +18,22 @@ homicide_data = read_csv('https://raw.githubusercontent.com/washingtonpost/data-
   janitor::clean_names() %>% 
   unite(city_state, c(city, state), sep = ", ", remove = FALSE) %>% 
   filter(!(city_state %in% c('Dallas, TX', 'Phoenix, AZ', 'Kansas City, MO', 'Tulsa, AL'))) %>% 
-  mutate(outcome = as.factor(ifelse(disposition == 'Closed by arrest', 'solved', 'unsolved')),
+  mutate(outcome = as.factor(ifelse(disposition == 'Closed by arrest', 1, 0)),
          victim_age = as.numeric(victim_age),
          victim_race = ifelse(victim_race == 'White', 'white', 'non-white'),
-         victim_race = fct_relevel(victim_race, 'white'),
+         victim_race = fct_relevel(victim_race, 'white', 'non-white'),
          victim_sex = as.factor(victim_sex))
 ```
 
-### Logistic Regression
-Baltimore
+### Regression
+Logistic Regression and OR (and 95% CI) for Baltimore, MD
 ```{r}
 baltimore = homicide_data %>% 
   filter(city == 'Baltimore')
 
 baltimore_lr = glm(outcome ~ victim_age + victim_sex + victim_race, data = baltimore, family = binomial())
 
+#OR and 95% CI
 baltimore_lr %>% broom::tidy() %>% 
   janitor::clean_names() %>% 
   mutate(OR = exp(estimate),
@@ -40,13 +42,12 @@ baltimore_lr %>% broom::tidy() %>%
   filter(term == 'victim_racenon-white') %>% 
   select(OR, lower_bound, upper_bound) %>% 
   knitr::kable()
-
 ```
 
-All cities
+Logistic Regression and OR (and 95% CI) for all cities
 ```{r}
 city_lr = homicide_data %>% 
-  group_by(city) %>% 
+  group_by(city_state) %>% 
   nest() %>% 
   mutate(models = map(data, ~ glm(outcome ~ victim_age + victim_sex + victim_race, data = .x, family = binomial())),
          models = map(models, broom::tidy)) %>% 
@@ -57,28 +58,99 @@ city_lr = homicide_data %>%
          lower_bound = exp(estimate - (1.96 * std_error)),
          upper_bound = exp(estimate + (1.96 * std_error)))
 
+#OR and 95% CI
 city_lr %>% 
   filter(term == 'victim_racenon-white') %>% 
-  select(city, OR, lower_bound, upper_bound) %>% 
+  select(city_state, OR, lower_bound, upper_bound) %>% 
   knitr::kable()
 ```
 
 Plot of estimated ORs and CIs for all cities
 ```{r}
 city_lr %>% 
-  mutate(city = as.factor(city),
-         city = fct_reorder(city, OR)) %>% 
   filter(term == 'victim_racenon-white') %>%
-  ggplot(aes(x = city, y = OR)) +
+  mutate(city_state = fct_reorder(city_state, OR)) %>% 
+  ggplot(aes(x = city_state, y = OR)) +
   geom_point() +
   geom_errorbar(aes(ymin = lower_bound, ymax = upper_bound)) +
   theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
   labs(
     title = 'OR (and 95% CI) for each City'
   )
-
 ```
 
-Commenttttttttt
+All significant OR estimates indicate that the odds of a homicide being solved when the victim is non-white is lower than the odds of a homicide being solved when the victim is white. There are no significant OR values greater than 1. The city with the smallest OR and therefore the greatest disparity in solved cases is Boston, MA.
 
 # Problem 2
+### Import and Clean Data
+```{r}
+birthwt = read.csv('./data/birthweight.csv') %>% 
+  janitor::clean_names() %>% 
+  mutate(babysex = as.factor(babysex),
+         frace = as.factor(frace),
+         malform = as.factor(malform),
+         mrace = as.factor(mrace))
+
+#Check to see if there is missing data
+filter_all(birthwt, any_vars(is.na(.)))
+```
+
+### Model building
+I hypothesis that the model for birthweight should include the variables for baby length(blength), family income (fincome), gestational age in weeks (gaweeks), and mother's pre-pregnancy BMI (ppbmi). 
+
+These variables were chosen for the following reasons:
+
+  * blength - smaller babies will generally weigh less than larger babies
+  * fincome - a proxy for SES
+  * gaweeks - infants born early will be less developed and therefore should weight less
+  * ppbmi - evidence shows that maternal prepregnancy BMI is related to infant birthweight (Heude B, Thiébaugeorges O, Goua V, et al. Pre-pregnancy body mass index and weight gain during pregnancy: relations with gestational diabetes and hypertension, and birth outcomes. Matern Child Health J. 2012;16(2):355-63.)
+
+Hypothesized model and plot of residuals vs. predicted values
+```{r}
+fit = lm(bwt ~ blength + fincome + gaweeks + ppbmi, data = birthwt)
+
+birthwt %>% 
+  modelr::add_predictions(fit) %>% 
+  modelr::add_residuals(fit) %>% 
+  ggplot(aes(x = pred, y = resid)) +
+  geom_point() +
+  labs(
+    title = 'Residuals vs Predicted Values'
+  )
+```
+
+Creation of 2 additional models
+```{r}
+fit2 = lm(bwt ~ blength + gaweeks, data = birthwt)
+fit3 = lm(bwt ~ bhead + blength + babysex + bhead*blength + bhead*babysex + blength*babysex + bhead*blength*babysex, data = birthwt)
+```
+
+Comparison of models
+```{r}
+set.seed(1)
+
+cv_df = crossv_mc(birthwt, 100) %>% 
+  mutate(train = map(train, as_tibble),
+         test = map(test, as_tibble))
+
+cv_df = cv_df %>% 
+  mutate(fit = map(train, ~fit),
+         fit2 = map(train, ~fit2),
+         fit3 = map(train, ~fit3)) %>% 
+  mutate(rmse_fit    = map2_dbl(fit, test, ~rmse(model = .x, data = .y)),
+         rmse_fit2 = map2_dbl(fit2, test, ~rmse(model = .x, data = .y)),
+         rmse_fit3 = map2_dbl(fit3, test, ~rmse(model = .x, data = .y)))
+
+cv_df %>% 
+  select(starts_with("rmse")) %>% 
+  gather(key = model, value = rmse) %>% 
+  mutate(model = str_replace(model, "rmse_", ""),
+         model = fct_inorder(model)) %>% 
+  ggplot(aes(x = model, y = rmse)) + 
+  geom_violin() +
+  labs(
+    title = 'Comparison of 3 Models'
+  )
+```
+
+The best model is fit3, which is the linear regression of birthweight from the variables bhead, blength, and babysex, as well as all interaction terms. The above plot shows fit3 is the best model because it has the lowest range of rmse values, which indicates that the model explains more of the variance than the other two models.
